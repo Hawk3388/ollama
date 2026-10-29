@@ -31,13 +31,19 @@ func runSpeech(ctx context.Context, model, voice, text string, input io.Reader, 
 	if text != "" || !interactive {
 		return speak(ctx, model, voice, strings.NewReader(text))
 	}
+	return speechPrompt(ctx, model, "Enter text to speak (/bye to exit)", func(ctx context.Context, text string) error {
+		return speak(ctx, model, voice, strings.NewReader(text))
+	})
+}
+
+func speechPrompt(ctx context.Context, model, placeholder string, respond func(context.Context, string) error) error {
 	if _, err := player(model, ""); err != nil {
 		return err
 	}
 
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:      ">>> ",
-		Placeholder: "Enter text to speak (/bye to exit)",
+		Placeholder: placeholder,
 	})
 	if err != nil {
 		return err
@@ -46,6 +52,9 @@ func runSpeech(ctx context.Context, model, voice, text string, input io.Reader, 
 		scanner.HistoryDisable()
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Clear anything typed while audio played; readline redraws it.
 		fmt.Print(readline.CursorBOL + readline.ClearToEOL)
 		line, err := scanner.Readline()
@@ -72,7 +81,7 @@ func runSpeech(ctx context.Context, model, voice, text string, input io.Reader, 
 		}
 		// Ctrl+C stops speaking and returns to the prompt.
 		speakCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-		if err := speak(speakCtx, model, voice, strings.NewReader(text)); err != nil && speakCtx.Err() == nil {
+		if err := respond(speakCtx, text); err != nil && speakCtx.Err() == nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
 		stop()
@@ -143,10 +152,6 @@ func speak(ctx context.Context, model, voice string, r io.Reader) error {
 	return err
 }
 
-// minSpeechPiece is how much text speechPieces gathers before it sends a
-// sentence on, so speech starts quickly without many tiny requests.
-const minSpeechPiece = 100
-
 // speechPieces sends text from r on as soon as it ends at a sentence or
 // paragraph break, sized for /v1/audio/speech, and the rest when r ends.
 func speechPieces(ctx context.Context, r io.Reader) <-chan string {
@@ -184,12 +189,12 @@ func speechPieces(ctx context.Context, r io.Reader) <-chan string {
 }
 
 // speechCut returns where text can be cut so the part before it is spoken
-// now: after the last paragraph break or sentence end, once a paragraph or at
-// least minSpeechPiece characters have arrived. It returns 0 to wait.
+// now: after the last paragraph break or sentence end. It returns 0 to wait
+// for a complete sentence, even when stdin has not reached EOF yet.
 func speechCut(text string) int {
 	para := strings.LastIndex(text, "\n\n")
 	cut := max(para, lastSentenceEnd(text))
-	if para > 0 || (cut > 0 && utf8.RuneCountInString(text[:cut]) >= minSpeechPiece) {
+	if cut > 0 {
 		return cut
 	}
 	return 0

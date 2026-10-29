@@ -143,6 +143,12 @@ type ChatRequest struct {
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
+	// OutputModalities selects text (default) or native audio generation.
+	OutputModalities []string `json:"output_modalities,omitempty"`
+
+	// Audio configures native audio output; currently only pcm16 is supported.
+	Audio *AudioOptions `json:"audio,omitempty"`
+
 	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
@@ -182,6 +188,13 @@ type ChatRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+}
+
+// AudioOptions configures the audio returned by [Client.Chat].
+type AudioOptions struct {
+	Format string `json:"format"`
+	// Voice is currently unsupported for native audio; non-empty values are rejected.
+	Voice string `json:"voice,omitempty"`
 }
 
 type Tools []Tool
@@ -538,6 +551,9 @@ type ChatResponse struct {
 	// Message contains the message or part of a message from the model.
 	Message Message `json:"message"`
 
+	// Audio contains one chunk of native model output, encoded as base64 in JSON.
+	Audio *AudioChunk `json:"audio,omitempty"`
+
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
 
@@ -551,6 +567,14 @@ type ChatResponse struct {
 	Logprobs []Logprob `json:"logprobs,omitempty"`
 
 	Metrics
+}
+
+// AudioChunk is signed 16-bit little-endian PCM without a container header.
+type AudioChunk struct {
+	Data       []byte `json:"data"`
+	Format     string `json:"format"`
+	SampleRate int    `json:"sample_rate"`
+	Channels   int    `json:"channels"`
 }
 
 // DebugInfo contains debug information for template rendering

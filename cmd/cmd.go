@@ -902,6 +902,36 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		opts.KeepAlive = &api.Duration{Duration: d}
 	}
 
+	audioOutput, _ := cmd.Flags().GetBool("audio")
+	speakReply, _ := cmd.Flags().GetBool("speak")
+	readAloud, _ := cmd.Flags().GetBool("tts")
+	if audioOutput && (speakReply || readAloud) || speakReply && readAloud {
+		return errors.New("choose one audio mode: --speak to answer and read the reply, --tts to read your input, or --audio for a native audio answer")
+	}
+	// Preserve the earlier combined spelling; new usage names the action.
+	legacySpoken := audioOutput && cmd.Flags().Changed("voice")
+	speakReply = speakReply || legacySpoken
+	nativeAudio := audioOutput && !speakReply
+	generatedAudio := nativeAudio || speakReply
+	if generatedAudio {
+		mode := "--audio"
+		if speakReply {
+			mode = "--speak"
+		}
+		for _, flag := range []string{"format", "ask", "choice", "level", "truncate", "dimensions"} {
+			if cmd.Flags().Changed(flag) {
+				return fmt.Errorf("%s does not support --%s", mode, flag)
+			}
+		}
+		if opts.Think != nil && opts.Think.Bool() {
+			return fmt.Errorf("%s does not support thinking; omit --think or use --think=false", mode)
+		}
+		if opts.Runner != "" && opts.Runner != manifest.RunnerLlamaCPP && opts.Runner != manifest.RunnerGGML {
+			return fmt.Errorf("%s requires the llama.cpp GGUF runner", mode)
+		}
+		opts.Runner = manifest.RunnerLlamaCPP
+	}
+
 	prompts := args[1:]
 	stdinPiped := !term.IsTerminal(int(os.Stdin.Fd()))
 	if stdinPiped {
@@ -950,9 +980,21 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	ensureCloudStub(cmd.Context(), client, name)
 
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
-	if err != nil {
-		return err
+	if generatedAudio {
+		if !slices.Contains(info.Capabilities, model.CapabilityAudioOutput) {
+			if speakReply {
+				return fmt.Errorf("%s does not support --speak; answering and reading the reply currently requires LFM3-Omni GGUF", name)
+			}
+			return fmt.Errorf("%s does not support native audio answers; --audio requires LFM3-Omni GGUF with its audio codec projector", name)
+		}
+		if speakReply && !slices.Contains(info.Capabilities, model.CapabilitySpeech) {
+			return fmt.Errorf("%s cannot read generated replies with --speak: text-to-speech is not supported", name)
+		}
+	} else {
+		opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
+		if err != nil {
+			return err
+		}
 	}
 
 	applyShowResponseToRunOptions(&opts, info)
@@ -960,8 +1002,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	// prepend stdin to the prompt if provided; speech models read it as it
 	// arrives instead. Models that also chat speak when --voice is given and
 	// chat otherwise.
-	speech := slices.Contains(info.Capabilities, model.CapabilitySpeech) &&
-		(!slices.Contains(info.Capabilities, model.CapabilityCompletion) || cmd.Flags().Changed("voice"))
+	speech := !generatedAudio && slices.Contains(info.Capabilities, model.CapabilitySpeech) &&
+		(!slices.Contains(info.Capabilities, model.CapabilityCompletion) || readAloud || cmd.Flags().Changed("voice"))
+	if readAloud && !speech {
+		return fmt.Errorf("%s cannot read input aloud with --tts: text-to-speech is not supported", name)
+	}
 	if stdinPiped && !speech {
 		in, err := io.ReadAll(os.Stdin)
 		if err != nil {
@@ -975,6 +1020,19 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 	opts.Prompt = strings.Join(prompts, " ")
+	if generatedAudio {
+		if speakReply {
+			voice, err := cmd.Flags().GetString("voice")
+			if err != nil {
+				return err
+			}
+			if legacySpoken {
+				fmt.Fprintln(os.Stderr, "Answering and reading the reply. Use --speak --voice instead of --audio --voice for this mode.")
+			}
+			return runSpokenChat(cmd.Context(), client, opts, voice, interactive)
+		}
+		return runAudioChat(cmd.Context(), client, opts, interactive)
+	}
 
 	if slices.Contains(info.Capabilities, model.CapabilityDecision) {
 		return runDecision(cmd, opts, interactive)
@@ -1010,6 +1068,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if speech {
+		if readAloud && term.IsTerminal(int(os.Stdout.Fd())) {
+			fmt.Fprintln(os.Stderr, "Reading input text aloud...")
+		}
 		voice, err := cmd.Flags().GetString("voice")
 		if err != nil {
 			return err
@@ -1516,7 +1577,11 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	}
 
 	if len(resp.Voices) > 0 {
-		tableRender("Voices", func() (rows [][]string) {
+		title := "Voices"
+		if slices.Contains(resp.Capabilities, model.CapabilityAudioOutput) {
+			title = "Voices (--tts / --speak)"
+		}
+		tableRender(title, func() (rows [][]string) {
 			for _, voice := range resp.Voices {
 				rows = append(rows, []string{"", voice})
 			}
@@ -2602,6 +2667,9 @@ func NewCLI() *cobra.Command {
 		Short: "Run a model",
 		Example: `  ollama run gemma4
   ollama run gemma4 "Why is the sky blue?"
+  ollama run lfm3-omni --speak --voice male-german "Warum ist der Himmel blau?"
+  ollama run lfm3-omni --tts --voice male-german "Diesen Text bitte vorlesen."
+  ollama run lfm3-omni --audio "Why is the sky blue?"
   ollama run nimble --ask "Is a refund being requested?" < ticket.txt
   ollama run nimble --ask "Which team should handle this?" \
     --choice billing="Payments and refunds" \
@@ -2627,7 +2695,10 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
-	runCmd.Flags().String("voice", "", "Voice to speak with (speech models only)")
+	runCmd.Flags().String("voice", "", "Voice for --speak or --tts; used alone, reads your input aloud")
+	runCmd.Flags().Bool("speak", false, "Read the reply as it is generated (LFM3-Omni; concurrent generation needs OLLAMA_NUM_PARALLEL=2)")
+	runCmd.Flags().Bool("tts", false, "Read your input text aloud without answering it")
+	runCmd.Flags().Bool("audio", false, "Generate a native audio answer; --audio --voice is a legacy alias for --speak --voice")
 	var asked []askedQuestion
 	runCmd.Flags().Var(questionFlag{"ask", &asked}, "ask", "Ask a decision model a question, answered yes or no unless --choice or --level follow")
 	runCmd.Flags().Var(questionFlag{"choice", &asked}, "choice", `Add a label for the preceding --ask to choose from, e.g. billing="Payments and refunds"`)

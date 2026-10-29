@@ -810,6 +810,10 @@ func mmprojMemoryRequirement(modelPath string, f *gguf.Model, projectors []strin
 }
 
 func appendJinjaArgs(params []string, config LlamaServerConfig) []string {
+	if config.NativeAudio {
+		// Realtime renders the GGUF templates itself. Omni is non-reasoning.
+		return append(params, "--jinja", "--reasoning", "off")
+	}
 	if config.DisableJinja {
 		// Go-rendered chat paths send already-rendered prompts through completion
 		// endpoints. Override any GGUF chat template so llama-server startup

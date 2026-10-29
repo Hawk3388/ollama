@@ -196,6 +196,12 @@ func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model
 	capabilities = m.parserCapabilities(capabilities)
 	capabilities = m.modelFamilyCapabilities(capabilities)
 	capabilities = m.filterUnsupportedCapabilities(capabilities, modelArch)
+	// Native conversational audio requires the GGUF codec and chat templates;
+	// a speech declaration alone only promises text-to-speech.
+	capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool { return c == model.CapabilityAudioOutput })
+	if m.supportsNativeAudio() {
+		capabilities = appendCapability(capabilities, model.CapabilityAudioOutput)
+	}
 
 	return capabilities
 }
@@ -602,16 +608,17 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 
 	// Map capabilities to their corresponding error
 	capToErr := map[model.Capability]error{
-		model.CapabilityCompletion: errCapabilityCompletion,
-		model.CapabilityTools:      errCapabilityTools,
-		model.CapabilityInsert:     errCapabilityInsert,
-		model.CapabilityVision:     errCapabilityVision,
-		model.CapabilityAudio:      errCapabilityAudio,
-		model.CapabilityEmbedding:  errCapabilityEmbedding,
-		model.CapabilityThinking:   errCapabilityThinking,
-		model.CapabilityImage:      errCapabilityImage,
-		model.CapabilityDecision:   errors.New("decision"),
-		model.CapabilitySpeech:     errors.New("speech"),
+		model.CapabilityCompletion:  errCapabilityCompletion,
+		model.CapabilityTools:       errCapabilityTools,
+		model.CapabilityInsert:      errCapabilityInsert,
+		model.CapabilityVision:      errCapabilityVision,
+		model.CapabilityAudio:       errCapabilityAudio,
+		model.CapabilityEmbedding:   errCapabilityEmbedding,
+		model.CapabilityThinking:    errCapabilityThinking,
+		model.CapabilityImage:       errCapabilityImage,
+		model.CapabilityDecision:    errors.New("decision"),
+		model.CapabilitySpeech:      errors.New("speech"),
+		model.CapabilityAudioOutput: errors.New("native audio output"),
 	}
 
 	for _, cap := range want {

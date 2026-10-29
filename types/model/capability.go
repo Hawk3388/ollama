@@ -3,16 +3,17 @@ package model
 type Capability string
 
 const (
-	CapabilityCompletion = Capability("completion")
-	CapabilityTools      = Capability("tools")
-	CapabilityInsert     = Capability("insert")
-	CapabilityVision     = Capability("vision")
-	CapabilityEmbedding  = Capability("embedding")
-	CapabilityThinking   = Capability("thinking")
-	CapabilityImage      = Capability("image")
-	CapabilityAudio      = Capability("audio")
-	CapabilityDecision   = Capability("decision")
-	CapabilitySpeech     = Capability("speech")
+	CapabilityCompletion  = Capability("completion")
+	CapabilityTools       = Capability("tools")
+	CapabilityInsert      = Capability("insert")
+	CapabilityVision      = Capability("vision")
+	CapabilityEmbedding   = Capability("embedding")
+	CapabilityThinking    = Capability("thinking")
+	CapabilityImage       = Capability("image")
+	CapabilityAudio       = Capability("audio")
+	CapabilityDecision    = Capability("decision")
+	CapabilitySpeech      = Capability("speech")
+	CapabilityAudioOutput = Capability("audio_output")
 )
 
 // IsValid reports whether c is recognized, such as "decision"; empty or unknown labels are invalid.
@@ -20,7 +21,7 @@ func (c Capability) IsValid() bool {
 	switch c {
 	case CapabilityCompletion, CapabilityTools, CapabilityInsert, CapabilityVision,
 		CapabilityEmbedding, CapabilityThinking, CapabilityImage, CapabilityAudio, CapabilityDecision,
-		CapabilitySpeech:
+		CapabilitySpeech, CapabilityAudioOutput:
 		return true
 	default:
 		return false

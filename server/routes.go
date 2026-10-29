@@ -2941,7 +2941,8 @@ func chatModeForModel(m *Model) chatExecutionMode {
 
 func llamaServerConfigForModel(m *Model) llm.LlamaServerConfig {
 	return llm.LlamaServerConfig{
-		DisableJinja:         usesOllamaRenderedChat(m),
+		DisableJinja:         usesOllamaRenderedChat(m) && !m.supportsNativeAudio(),
+		NativeAudio:          m.supportsNativeAudio(),
 		ManifestDigest:       m.Digest,
 		DraftModelPath:       m.DraftPath,
 		DraftModelShardPaths: slices.Clone(m.DraftShardPaths),
@@ -3042,6 +3043,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
+	if req.Audio != nil || req.OutputModalities != nil && !slices.Equal(req.OutputModalities, []string{"text"}) {
+		s.audioChatHandler(c, req)
 		return
 	}
 

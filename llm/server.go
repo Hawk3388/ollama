@@ -77,6 +77,7 @@ type LlamaServer interface {
 }
 
 type LlamaServerConfig struct {
+	NativeAudio          bool
 	DisableJinja         bool
 	ContextShift         bool
 	EnableMTP            bool

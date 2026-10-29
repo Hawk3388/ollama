@@ -1,9 +1,67 @@
 ---
 title: Speech
-description: Turn text into spoken audio with text-to-speech models.
+description: Read text aloud or generate native spoken answers.
 ---
 
 Speech models read text aloud. Ollama streams the audio as it is generated, so playback can start before the whole text has been spoken.
+
+## Choose what to hear
+
+For LFM3-Omni, choose the action explicitly:
+
+| What you want | Command | What is spoken |
+| --- | --- | --- |
+| Ask a question and hear the answer | `ollama run lfm3-omni --speak --voice male-german "Warum ist der Himmel blau?"` | The model's generated answer |
+| Read a text exactly as supplied | `ollama run lfm3-omni --tts --voice male-german "Der Himmel ist blau."` | Your input text |
+| Generate a native audio answer | `ollama run lfm3-omni --audio "Warum ist der Himmel blau?"` | The model's native spoken answer; voice selection is unavailable |
+
+Use `--speak` for answers with a chosen voice. The same model streams an
+answer and reads complete sentences aloud. `--voice` is optional; without it the default TTS
+voice is used. Use `--tts` to read the input itself, even if it is a question.
+Choose only one of `--speak`, `--tts`, or `--audio`.
+
+All three modes support `> answer.wav` to save audio. `--speak` and `--audio`
+without a prompt accept independent questions at an interactive prompt;
+`--tts` accepts text to read. On Windows, binary redirection requires CMD or
+PowerShell 7.4+.
+
+Existing calls remain supported: `--voice` alone reads the input, and
+`--audio --voice` is an older spelling of `--speak --voice` that prints a hint
+on stderr. Speech-only models such as Phonon read their input by default.
+
+### API equivalents
+
+| Action | API calls |
+| --- | --- |
+| Answer and read the reply (`--speak`) | Stream text from `/api/chat`; send complete sentences to `/v1/audio/speech` as `input` with the selected `voice` |
+| Read supplied text (`--tts`) | `/v1/audio/speech` with your text as `input` |
+| Native spoken answer (`--audio`) | `/api/chat` with `output_modalities: ["audio"]` |
+
+`--speak` performs these calls for you in the CLI, submitting complete sentences
+to speech while receiving the text stream. It is not a separate API
+endpoint. The native audio API does not accept a selected voice.
+
+### Read replies while they are being generated
+
+For the same LFM3-Omni model to generate text and speech concurrently, start
+the server with at least two parallel request slots:
+
+```powershell
+$env:OLLAMA_NUM_PARALLEL = "2"
+.\ollama.exe serve
+```
+
+On Linux: `OLLAMA_NUM_PARALLEL=2 ./ollama serve`. Restart an existing server
+after changing the setting. Additional slots require more context memory.
+Then run `ollama run lfm3-omni --speak --voice male-german "Your question"`.
+
+The first complete sentence is sent to speech immediately; playback begins
+when its audio is ready. With only one slot, speech waits for text generation
+to release it. The CLI continues draining text in either case, with a 1 MiB
+answer limit, so a queued speech request cannot block text generation.
+Cancellation or a speech failure cancels the text request too. If text
+generation fails after playback has begun, partial audio may already have
+been heard; the command still reports the failure.
 
 ## Setup
 
@@ -33,7 +91,7 @@ echo "Text from another program works too." | ollama run phonon
 ollama run gemma4 --hidethinking "Tell me a fun fact about owls in two sentences." | ollama run phonon
 ```
 
-Piped text is spoken as it arrives, so a chat model's answer starts playing after its first sentence or two.
+Piped text is spoken as it arrives, so a chat model's answer starts playing after its first complete sentence.
 
 Run `ollama run phonon` without any text to type lines at a `>>>` prompt. Each line is spoken when you press Enter. Press Ctrl+C to stop speaking, and type `/bye` or press Ctrl+D to exit.
 
@@ -126,3 +184,96 @@ curl -sN http://localhost:11434/v1/audio/speech \
 - Speech models only generate speech: chat, completion, and embedding requests to them return a `400` error.
 
 `ollama show phonon` and `/api/show` list the model's capabilities as `speech`, and its voices (`voices` in `/api/show`). See [OpenAI compatibility](/api/openai-compatibility) for every supported field.
+
+## Native audio answers
+
+LFM3-Omni can answer a text prompt with audio through `/api/chat`. The model
+generates the answer and speech together in one native generation. This uses
+the local llama.cpp GGUF runner and requires the matching audio codec projector;
+`/api/show` reports the `audio_output` capability for supported models.
+
+Use `--audio` to hear a native answer from the terminal:
+
+```shell
+ollama run lfm3-omni --audio "Why is the sky blue?"
+ollama run lfm3-omni --audio "Why is the sky blue?" > answer.wav
+```
+
+Without a prompt, `ollama run lfm3-omni --audio` opens a prompt for independent
+questions; it does not retain conversation history. The model's `SYSTEM` prompt
+applies. Playback uses the system player in one-second pieces while generation
+continues; transitions between pieces depend on the player. Redirected output is
+streamed as PCM16 WAV, 24 kHz, mono. A seekable file gets its final lengths on
+completion; pipes keep unknown WAV lengths. On Windows use `cmd.exe` or
+PowerShell 7.4+ for binary output redirection.
+
+This differs from piping a chat model into Phonon: `--audio` uses the Omni
+model's own audio generation in one request and never calls `/v1/audio/speech`.
+Models with only the `speech` capability continue to read text aloud without
+`--audio`.
+
+To hear an answer with a selected TTS voice, use `--speak`:
+
+```shell
+ollama run lfm3-omni --speak --voice male-german "Antworte kurz auf Deutsch: Warum ist der Himmel blau?"
+```
+
+This explicitly selects a text-and-TTS CLI workflow: the same model streams a
+text answer and reads complete sentences through its TTS endpoint using the
+chosen voice. With two server slots, speech can begin while text is still
+being generated. With one slot, speech waits until text generation finishes.
+Interactive input and WAV redirection work as above; generated text is not
+printed to stdout. `--speak` without `--voice` uses the default TTS voice.
+Use `--tts` to read the input text itself aloud.
+
+Native audio without `--voice` still uses a single generation. The native API
+continues to reject non-empty `audio.voice`: the pinned realtime backend has
+no voice selector. The CLI workflow makes a text chat request followed by TTS
+requests; it does not change the native audio API.
+
+```shell
+curl -N http://localhost:11434/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "lfm3-omni",
+    "runner": "llamacpp",
+    "messages": [
+      {"role": "system", "content": "Answer briefly in English."},
+      {"role": "user", "content": "Why is the sky blue?"}
+    ],
+    "output_modalities": ["audio"],
+    "audio": {"format": "pcm16"},
+    "stream": true
+  }'
+```
+
+The response is a stream of newline-delimited JSON objects. Each audio chunk
+includes base64-encoded signed 16-bit little-endian PCM without a container header:
+
+```json
+{
+  "model": "lfm3-omni",
+  "message": {"role": "assistant", "content": ""},
+  "audio": {
+    "data": "AQACAA==",
+    "format": "pcm16",
+    "sample_rate": 24000,
+    "channels": 1
+  },
+  "done": false
+}
+```
+
+Decode `audio.data` and play the samples at 24 kHz, mono, as chunks arrive.
+The final object has `done: true` and no audio field. A terminal `error` object
+or a connection ending without `done: true` indicates an incomplete response.
+Closing the connection cancels generation.
+
+Native audio currently accepts one user text message and an optional preceding
+system message. If no system message is provided, the model's `SYSTEM` prompt
+is used. Messages are limited to 64 KiB each. Only streaming PCM16 output is
+supported; chat history, media input, tools, thinking, structured output and
+sampling overrides are not supported. Allowed options are `num_ctx`,
+`num_batch`, `num_gpu`, `num_thread`, and `num_predict`. A nonpositive or default
+`num_predict` uses a 2048-token budget shared by native text/audio decoding.
+`keep_alive` controls how long the model stays loaded after the request.
