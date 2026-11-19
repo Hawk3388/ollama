@@ -19,6 +19,13 @@ var _ AudioChatter = (*llamaServerRunner)(nil)
 // AudioChat uses b11963's native realtime conversation. There is exactly one
 // response.create; neither Completion nor Speech (/tts) is involved.
 func (s *llamaServerRunner) AudioChat(ctx context.Context, req AudioChatRequest, emit func(api.AudioChunk) error) error {
+	return s.WithRealtime(ctx, func(conn *websocket.Conn) error {
+		return streamRealtimeAudio(ctx, conn, req, emit)
+	})
+}
+
+// WithRealtime reserves one runner slot for the lifetime of the conversation.
+func (s *llamaServerRunner) WithRealtime(ctx context.Context, use func(*websocket.Conn) error) error {
 	if !s.launch.config.NativeAudio || s.launch.config.DisableJinja || len(s.launch.projectors) == 0 {
 		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "native audio requires LFM3-Omni GGUF with its audio codec projector and native chat templates"}
 	}
@@ -54,7 +61,7 @@ func (s *llamaServerRunner) AudioChat(ctx context.Context, req AudioChatRequest,
 	defer closeConn()
 	stop := context.AfterFunc(ctx, closeConn)
 	defer stop()
-	return streamRealtimeAudio(ctx, conn, req, emit)
+	return use(conn)
 }
 
 type realtimeAudioEvent struct {

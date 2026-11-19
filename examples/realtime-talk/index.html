@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Ollama voice conversation</title>
+<h1>Talk to LFM3-Omni</h1>
+<label>Ollama server <input id="server" value="http://127.0.0.1:11434"></label>
+<button id="start">Start call</button>
+<button id="end" disabled>End call</button>
+<p id="status" role="status">Allow microphone access, then speak and pause for a reply.</p>
+<audio id="reply" autoplay controls></audio>
+<script type="module">
+const get = id => document.getElementById(id)
+let call
+function hangUp(message) {
+  const current = call
+  call = undefined
+  current?.abort.abort()
+  current?.mic?.getTracks().forEach(t => t.stop())
+  current?.pc.close()
+  get('reply').srcObject = null
+  get('status').textContent = message
+  get('start').disabled = false
+  get('end').disabled = true
+}
+get('end').onclick = () => hangUp('Call ended.')
+window.addEventListener('pagehide', () => hangUp('Call ended.'))
+get('start').onclick = async () => {
+  const pc = new RTCPeerConnection()
+  const current = call = {pc, abort: new AbortController()}
+  get('start').disabled = true
+  get('end').disabled = false
+  get('status').textContent = 'Connecting microphone and loading model…'
+  try {
+    pc.ontrack = event => { get('reply').srcObject = new MediaStream([event.track]) }
+    pc.onconnectionstatechange = () => {
+      if (call !== current) return
+      if (pc.connectionState === 'connected') get('status').textContent = 'Speak, then pause for the reply.'
+      if (['failed','disconnected','closed'].includes(pc.connectionState)) hangUp('Connection ended.')
+    }
+    const mic = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true}})
+    if (call !== current) { mic.getTracks().forEach(t => t.stop()); return }
+    current.mic = mic
+    pc.addTrack(mic.getAudioTracks()[0], mic)
+    await pc.setLocalDescription(await pc.createOffer())
+    // The signaling endpoint accepts a single offer with its ICE candidates.
+    if (pc.iceGatheringState !== 'complete') {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('ICE gathering timed out')), 10000)
+        pc.onicegatheringstatechange = () => {
+          if (pc.iceGatheringState === 'complete') { clearTimeout(timeout); resolve() }
+        }
+      })
+    }
+    const response = await fetch(new URL('/v1/realtime/calls?model=lfm3-omni', get('server').value), {
+      method: 'POST', headers: {'Content-Type':'application/sdp'},
+      body: pc.localDescription.sdp, signal: current.abort.signal
+    })
+    if (!response.ok) throw new Error(await response.text())
+    await pc.setRemoteDescription({type:'answer', sdp:await response.text()})
+  } catch (e) { if (call === current) hangUp(e.message) }
+}
+</script>
+</html>

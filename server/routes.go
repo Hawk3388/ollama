@@ -2443,6 +2443,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	// OpenAI-compatible audio endpoints
 	r.POST("/v1/audio/transcriptions", s.TranscriptionHandler)
 	r.POST("/v1/audio/translations", s.TranslationHandler)
+	r.POST("/v1/realtime/calls", s.realtimeCallHandler)
 	r.POST("/v1/audio/speech", s.SpeechHandler)
 
 	// Inference (Anthropic compatibility)

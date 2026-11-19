@@ -1229,6 +1229,48 @@ components:
           type: string
           description: Error message describing what went wrong
 paths:
+  /v1/realtime/calls:
+    post:
+      summary: Start a local WebRTC voice conversation
+      operationId: createRealtimeCall
+      description: Negotiate one bidirectional PCMU audio track for LFM3-Omni. Supply the model in the query or the multipart session.
+      parameters:
+        - in: query
+          name: model
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/sdp:
+            schema:
+              type: string
+              description: SDP offer including gathered ICE candidates
+          multipart/form-data:
+            schema:
+              type: object
+              required: [sdp]
+              properties:
+                sdp:
+                  type: string
+                session:
+                  type: string
+                  description: JSON session configuration with model, optional instructions, and optional type realtime
+      responses:
+        '201':
+          description: SDP answer for the voice call
+          content:
+            application/sdp:
+              schema:
+                type: string
+        '400':
+          description: Invalid offer, session configuration, model or runner
+        '403':
+          description: Signaling requires a loopback client
+        '404':
+          description: Model not installed
+        '502':
+          description: The model backend could not start a realtime session
   /v1/systemone:
     post:
       summary: Answer typed questions

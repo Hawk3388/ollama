@@ -277,3 +277,25 @@ sampling overrides are not supported. Allowed options are `num_ctx`,
 `num_batch`, `num_gpu`, `num_thread`, and `num_predict`. A nonpositive or default
 `num_predict` uses a 2048-token budget shared by native text/audio decoding.
 `keep_alive` controls how long the model stays loaded after the request.
+
+## Local WebRTC voice conversations
+
+Start Ollama with the GGUF LFM3-Omni model and matching audio projector installed.
+From the repository root run `python -m http.server 8080 --bind 127.0.0.1 --directory examples/realtime-talk`.
+Open http://127.0.0.1:8080, set the local Ollama server address, select **Start call**,
+and allow microphone access. Speak, pause for about 600 ms, and listen. Ask a
+follow-up once the reply ends. **End call** releases the microphone and connection.
+
+`POST /v1/realtime/calls?model=lfm3-omni` accepts an `application/sdp` offer and
+returns an SDP answer (201). Alternatively, post multipart form fields `sdp`
+and `session` with JSON fields `type` (realtime), `model`, and optional
+`instructions`. Offer one bidirectional audio track with PCMU (8 kHz mono).
+The local peer uses host ICE candidates. The model receives 16 kHz PCM and its
+native 24 kHz PCM reply is converted back to PCMU for playback.
+
+This is a media-only, turn-based subset of WebRTC calling. It reserves one model
+slot and retains conversation history on the runner for up to 30 minutes. The
+server detects pauses using microphone level, caps each utterance at 30 seconds,
+and resumes listening after transmitting a reply. Use headphones in noisy rooms.
+OpenAI data-channel commands, Opus, remote signaling, and interrupting a reply
+are outside this implementation.
